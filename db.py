@@ -1,26 +1,25 @@
 from pymongo import MongoClient
 
-# Connect to local MongoDB
 client = MongoClient("mongodb://localhost:27017/")
-db = client["product_db"]
-collection = db["products"]
+db = client["fast_crud_db"]
+products_col = db["products"]
 
-# Insert a new product
+# Insert product
 def insert_product(data):
-    return collection.insert_one(data)
+    products_col.insert_one(data)
 
 # Get all products
 def get_all_products():
-    return list(collection.find())
+    return list(products_col.find({}, {"_id": 0}))
 
-# Delete a row by product_code
-def delete_product(product_code):
-    return collection.delete_one({"product_code": product_code})
+# Delete a column from all products
+def delete_column(col_name):
+    products_col.update_many({}, {"$unset": {col_name: ""}})
 
-# Update product by product_code
+# Update a product by product_code
 def update_product(product_code, update_data):
-    return collection.update_one({"product_code": product_code}, {"$set": update_data})
+    products_col.update_one({"product_code": product_code}, {"$set": update_data})
 
-# Delete a column (field) from all documents
-def delete_column(column_name):
-    return collection.update_many({}, {"$unset": {column_name: ""}})
+# Delete product by code
+def delete_product(product_code):
+    products_col.delete_one({"product_code": product_code})

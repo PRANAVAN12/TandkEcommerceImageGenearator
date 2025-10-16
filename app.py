@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
-from db import insert_product, get_all_products, delete_product, update_product, delete_column
-from utils import write_excel, image_to_base64
+from db import insert_product, get_all_products, delete_column, update_product
+from utils import write_excel, image_to_base64, generate_short_description, generate_long_description, generate_product_image
 
 st.set_page_config(page_title="Fast CRUD App", layout="wide")
-st.title("📦 Fast CRUD App with MongoDB")
+st.title("📦 Fast CRUD App - Image & Description Generator")
 
 # -----------------------
 # Upload Excel / Insert
@@ -16,9 +16,7 @@ if uploaded_file:
 
     if st.button("Insert to DB"):
         for _, row in df.iterrows():
-            # Optional: convert local image paths to base64
-            if "image_path" in row and pd.notna(row["image_path"]):
-                row["image_base64"] = image_to_base64(row["image_path"])
+            # Only insert if product_code doesn't exist
             insert_product(row.to_dict())
         st.success("✅ Products added to DB")
 
@@ -28,41 +26,55 @@ if uploaded_file:
 st.subheader("📝 View Products")
 all_products = get_all_products()
 if all_products:
-    view_df = pd.DataFrame(all_products)
-    st.dataframe(view_df.head(20))
+    df_all = pd.DataFrame(all_products)
+    st.dataframe(df_all.head(20))
 
-    # Show images for first 20 rows
-    for idx, row in view_df.head(20).iterrows():
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            if "image_base64" in row and row["image_base64"]:
-                st.image(row["image_base64"], width=100)
-        with col2:
-            st.write(row)
+    # Dropdown to select action
+    action = st.selectbox(
+        "Select action to perform for imported products:",
+        ["Generate Image", "Generate Short Description", "Generate Long Description"]
+    )
 
-# -----------------------
-# Delete Row
-# -----------------------
-st.subheader("🗑️ Delete Product by Code")
-del_code = st.text_input("Enter product_code to delete")
-if st.button("Delete Product"):
-    delete_product(del_code)
-    st.success(f"✅ Product with code {del_code} deleted")
+    # Handle missing columns safely
+    image_col = df_all.get("image_base64", pd.Series([None]*len(df_all)))
+    short_desc_col = df_all.get("short_description", pd.Series([None]*len(df_all)))
+    long_desc_col = df_all.get("long_description", pd.Series([None]*len(df_all)))
 
-# -----------------------
-# Update Row
-# -----------------------
-st.subheader("✏️ Update Product")
-update_code = st.text_input("Enter product_code to update")
-if update_code:
-    product = [p for p in all_products if p["product_code"] == update_code]
-    if product:
-        product = product[0]
-        new_name = st.text_input("New Product Name", value=product.get("product_name", ""))
-        new_price = st.number_input("New Price", value=float(product.get("price", 0)))
-        if st.button("Update Product"):
-            update_product(update_code, {"product_name": new_name, "price": new_price})
-            st.success(f"✅ Product {update_code} updated")
+    # Filter rows needing generation
+    rows_to_generate = df_all[
+   
+    ((action == "Generate Image") & (image_col.isna())) |
+    ((action == "Generate Short Description") & (short_desc_col.isna())) |
+    ((action == "Generate Long Description") & (long_desc_col.isna()))
+
+
+    ]
+
+    st.info(f"✅ {len(rows_to_generate)} products need {action.lower()} generation")
+
+    if st.button(f"Start {action} Generation"):
+        progress_bar = st.progress(0)
+        for i, row in rows_to_generate.iterrows():
+            product_code = row["Item Description"]
+            update_data = {}
+
+            if action == "Generate Image":
+                img_base64 = generate_product_image(row)
+                update_data["image_base64"] = img_base64
+
+            elif action == "Generate Short Description":
+                short_desc = generate_short_description(row)
+                update_data["short_description"] = short_desc
+
+            elif action == "Generate Long Description":
+                long_desc = generate_long_description(row)
+                update_data["long_description"] = long_desc
+
+            # Update DB
+            update_product(product_code, update_data)
+            progress_bar.progress((i+1)/len(rows_to_generate))
+
+        st.success(f"✅ {action} generation completed!")
 
 # -----------------------
 # Delete Column
