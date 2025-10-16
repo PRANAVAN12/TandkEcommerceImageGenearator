@@ -1,25 +1,21 @@
 from pymongo import MongoClient
 
-client = MongoClient("mongodb://localhost:27017/")
+MONGO_URI = "mongodb://localhost:27017"  # change if using Atlas
+client = MongoClient(MONGO_URI)
 db = client["fast_crud_db"]
-products_col = db["products"]
+collection = db["productwws"]
 
-# Insert product
-def insert_product(data):
-    products_col.insert_one(data)
+def insert_product(product: dict):
+    """Insert product if it doesn't exist"""
+    unique_field = "Item Description"  # replace with your unique column
+    if not products_col.find_one({unique_field: product[unique_field]}):
+        products_col.insert_one(product)
 
-# Get all products
 def get_all_products():
-    return list(products_col.find({}, {"_id": 0}))
+    return list(collection.find({}, {"_id": 0}))
 
-# Delete a column from all products
-def delete_column(col_name):
-    products_col.update_many({}, {"$unset": {col_name: ""}})
+def update_product(product_name: str, update_data: dict):
+    collection.update_one({"product_name": product_name}, {"$set": update_data})
 
-# Update a product by product_code
-def update_product(product_code, update_data):
-    products_col.update_one({"product_code": product_code}, {"$set": update_data})
-
-# Delete product by code
-def delete_product(product_code):
-    products_col.delete_one({"product_code": product_code})
+def delete_column(column_name: str):
+    collection.update_many({}, {"$unset": {column_name: ""}})
