@@ -1,11 +1,18 @@
 import pymongo
 from pymongo import MongoClient, errors, ASCENDING
 from pymongo.collation import Collation
+import os
+import streamlit as st
 
 # --------------------------
 # MongoDB Connection
 # --------------------------
-MONGO_URI = "mongodb+srv://prana:gwAJG2n6GM6LB2wj@cluster0.pbytjt7.mongodb.net/fast_crud_db?retryWrites=true&w=majority"
+
+
+MONGO_URI = st.secrets["MONGO"]["URI"]
+
+
+
 
 try:
     # Connect with TLS/SSL and timeout
