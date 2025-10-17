@@ -1,51 +1,57 @@
+
+
 import base64
 from io import BytesIO
 from PIL import Image
-import requests
-from duckduckgo_search import DDGS
+import pandas as pd
+from google import genai
+from google.genai import types
 
+API_KEY = "AIzaSyA-rBHw05nPOAYg8X_GBgnLLQBKMrxjGos"
+client = genai.Client(api_key=API_KEY)
 
-
-def write_excel(df):
-    from io import BytesIO
-    import pandas as pd
+def write_excel(df: pd.DataFrame) -> bytes:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
     return output.getvalue()
 
-def generate_short_description(product):
-    name = product.get("Item Description", "Product")
-    return f"{name} - High quality and reliable."
-
-def generate_long_description(product):
-    name = product.get("Item Description", "Product")
-    desc = product.get("description", "")
-    return f"{name} is a premium product. {desc} Perfect for customers who want quality and performance."
-
-
-
-def generate_product_image(keyword: str) -> str:
+def generate_product_image(product: dict) -> str:
+    item_desc = product.get("Item Description", "Product")
+    prompt = f"High-quality e-commerce product photo of {item_desc}, white background, realistic, studio lighting"
     try:
-        with DDGS() as ddgs:
-            results = ddgs.images(keyword, max_results=1)
-            results = list(results)  # DDGS returns a generator
-            if results:
-                image_url = results[0]["image"]
-                resp = requests.get(image_url, timeout=10)
-                img = Image.open(BytesIO(resp.content)).convert("RGB")
-            else:
-                img = Image.new("RGB", (200, 200), color=(255, 255, 255))
+        chat = client.chats.create(
+            model="gemini-2.5-flash-image",
+            config=types.GenerateContentConfig(response_modalities=["IMAGE"])
+        )
+        response = chat.send_message(prompt)
+        for part in response.candidates[0].content.parts:
+            if part.inline_data:
+                img_bytes = part.inline_data.data
+                img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+                return f"data:image/png;base64,{img_base64}"
+    except Exception:
+        pass
+    # fallback white image
+    img = Image.new("RGB", (256, 256), (255, 255, 255))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
 
-        buffered = BytesIO()
-        img.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        return f"data:image/png;base64,{img_str}"
+def generate_short_description(product: dict) -> str:
+    item_desc = product.get("Item Description", "Product")
+    prompt = (
+        f"Write a short, concise paragraph describing '{item_desc}' for an e-commerce product. "
+        "Highlight quality and key features in 1–2 sentences using minimal words."
+    )
+    try:
+        chat = client.chats.create(model="gemini-2.0-flash")
+        response = chat.send_message(prompt)
+        text_output = "".join([p.text for p in response.candidates[0].content.parts if p.text])
+        return text_output.strip()
+    except Exception:
+        return f"{item_desc} is a high-quality, reliable product perfect for e-commerce."
 
-    except Exception as e:
-        print("Image fetch failed:", e)
-        img = Image.new("RGB", (200, 200), color=(255, 255, 255))
-        buffered = BytesIO()
-        img.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        return f"data:image/png;base64,{img_str}"
+def generate_long_description(product: dict) -> str:
+    item_desc = product.get("Item Description", "Product")
+    return f"{item_desc} is a premium product suitable for your e-commerce store. Features high quality, durability, and excellent value for customers."

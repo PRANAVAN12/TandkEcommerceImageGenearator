@@ -1,10 +1,13 @@
 import streamlit as st
 import pandas as pd
-from db import insert_product, get_all_products, delete_column
+from db import insert_product, get_all_products, delete_column, products_col
 from utils import write_excel, generate_short_description, generate_long_description, generate_product_image
 
-st.set_page_config(page_title="Fast CRUD App - Image & Description Generator", layout="wide")
+st.set_page_config(page_title="Fast CRUD App", layout="wide")
 st.title("📦 Fast CRUD App - Image & Description Generator")
+
+if "generated_products" not in st.session_state:
+    st.session_state["generated_products"] = []
 
 # -----------------------
 # Upload Excel
@@ -12,74 +15,64 @@ st.title("📦 Fast CRUD App - Image & Description Generator")
 uploaded_file = st.file_uploader("Upload Excel file (.xlsx)", type=["xlsx"])
 if uploaded_file:
     df = pd.read_excel(uploaded_file, engine="openpyxl")
-    df.fillna("", inplace=True)  # Fill NaNs
-    st.subheader("📄 Imported Products Preview")
-    st.dataframe(df.head(20))
+    st.dataframe(df.head(10))
 
-    # Keep only new products (avoid duplicates in DB)
-    db_products = get_all_products()
-    existing_names = [p["Item Description"] for p in db_products]
-    new_products = df[~df["Item Description"].isin(existing_names)]
-    st.info(f"🆕 {len(new_products)} new products to generate")
-
-# -----------------------
-# Generate Image / Descriptions
-# -----------------------
-if uploaded_file and not new_products.empty:
-    action = st.selectbox(
-        "Select action for new products",
-        ["Generate Image", "Generate Short Description", "Generate Long Description"]
-    )
-
-    if st.button("Start Generation"):
+    if st.button("Generate Image & Descriptions"):
+        generated_rows = []
         progress_bar = st.progress(0)
-        for i, row in new_products.iterrows():
-            update_data = {}
 
-            if action == "Generate Image":
-                # Better prompt for Gemini/OpenAI
-              
-                img_base64 = generate_product_image(row['Item Description'])
-                update_data["image_base64"] = img_base64
+        for idx, row in df.iterrows():
+            product_dict = row.to_dict()
+            item_desc = product_dict.get("Item Description", "").strip().lower()
+            product_dict["Item Description"] = item_desc
 
-            elif action == "Generate Short Description":
-                short_desc = generate_short_description(row)
-                update_data["short_description"] = short_desc
+            # Skip if duplicate in DB
+            if products_col.find_one({"Item Description": item_desc}):
+                progress_bar.progress((idx + 1) / len(df))
+                continue
 
-            elif action == "Generate Long Description":
-                long_desc = generate_long_description(row)
-                update_data["long_description"] = long_desc
+            # Generate descriptions & image
+            product_dict["image_base64"] = generate_product_image(product_dict)
+            product_dict["short_description"] = generate_short_description(product_dict)
+            product_dict["long_description"] = generate_long_description(product_dict)
 
-            # Update DataFrame directly
-            for key, val in update_data.items():
-                new_products.at[i, key] = val
+            generated_rows.append(product_dict)
+            progress_bar.progress((idx + 1) / len(df))
 
-            progress_bar.progress((i+1)/len(new_products))
-        st.success(f"✅ {action} generation completed!")
+        if generated_rows:
+            st.session_state["generated_products"] = generated_rows
+            st.success(f"✅ Generated {len(generated_rows)} new products")
 
-        # Show updated table with images
-        st.subheader("🖼️ Generated Results Preview")
-        def render_image(val):
-            if val:
-                return f'<img src="{val}" width="80"/>'
-            return ""
-        display_df = new_products.copy()
-        st.write(display_df.to_html(escape=False, formatters={"image_base64": render_image}), unsafe_allow_html=True)
+            # Preview table
+            preview_df = pd.DataFrame(generated_rows).drop(columns=["image_base64"], errors="ignore")
+            st.subheader("📝 Generated Products Preview")
+            st.dataframe(preview_df)
+        else:
+            st.info("⚠️ No new products to generate. All exist in DB.")
 
 # -----------------------
-# Insert Generated Products to DB
+# Insert Generated Products
 # -----------------------
-if uploaded_file and not new_products.empty:
-    if st.button("Insert Generated Products into DB"):
-        for _, row in new_products.iterrows():
-            row_dict = row.fillna("").to_dict()
-            insert_product(row_dict)
-        st.success("✅ Products inserted into DB!")
+if st.session_state["generated_products"]:
+    if st.button("Insert Generated Products to DB"):
+        inserted_count = 0
+        skipped_count = 0
+        for prod in st.session_state["generated_products"]:
+            if insert_product(prod):
+                inserted_count += 1
+            else:
+                skipped_count += 1
+        st.success(f"✅ Inserted: {inserted_count}, Skipped (duplicates): {skipped_count}")
+        st.session_state["generated_products"] = []
 
-        # Show DB after insertion
-        db_products = get_all_products()
-        st.subheader("🗄️ Database Products")
-        st.dataframe(pd.DataFrame(db_products))
+# -----------------------
+# View DB
+# -----------------------
+st.subheader("📝 All Products in DB")
+all_products = get_all_products()
+if all_products:
+    db_df = pd.DataFrame(all_products)
+    st.dataframe(db_df)
 
 # -----------------------
 # Delete Column
@@ -91,10 +84,9 @@ if st.button("Delete Column"):
     st.success(f"✅ Column '{col_to_delete}' deleted from all products")
 
 # -----------------------
-# Download DB as Excel
+# Download DB
 # -----------------------
-st.subheader("⬇️ Download DB")
+st.subheader("⬇️ Download DB as Excel")
 if st.button("Download Excel"):
-    df_all = pd.DataFrame(get_all_products())
-    excel_bytes = write_excel(df_all)
+    excel_bytes = write_excel(pd.DataFrame(get_all_products()))
     st.download_button("Download Excel", data=excel_bytes, file_name="products.xlsx")
