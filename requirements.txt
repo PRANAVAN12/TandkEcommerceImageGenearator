@@ -5,7 +5,7 @@ openpyxl
 pymongo
 google-generativeai
 dnspython
-streamlit
-pandas
-pillow
-pymongo
+
+
+
+
