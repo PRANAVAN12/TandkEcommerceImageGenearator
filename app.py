@@ -4,170 +4,238 @@ from db import insert_product, get_all_products, delete_column, products_col
 from utils import write_excel, generate_product_image, generate_short_description, generate_long_description, init_gemini_client
 from io import BytesIO
 import base64
+import math
+import time
 
-st.set_page_config(page_title="Fast CRUD App", layout="wide")
-st.title("📦 Fast CRUD App - Image & Description Generator")
+st.set_page_config(page_title="🛒 E-Commerce Product Manager", layout="wide")
+st.title("🛍️ E-Commerce Product Management Dashboard")
 
 # -----------------------------
-# Gemini API Key
+# Helper utilities
 # -----------------------------
-api_key = st.text_input("Enter your Google Gemini API Key", type="password")
+def refresh_ui():
+    st.experimental_rerun()
+
+def safe_normalize(desc):
+    return str(desc).strip().lower() if desc is not None else ""
+
+def get_columns_from_db():
+    prods = get_all_products()
+    if prods:
+        return list(pd.DataFrame(prods).columns)
+    return []
+
+def show_toast(msg, kind="info"):
+    if kind == "success": st.success(msg)
+    elif kind == "error": st.error(msg)
+    elif kind == "warning": st.warning(msg)
+    else: st.info(msg)
+
+# -----------------------------
+# Sidebar: Gemini config + calculator + budget
+# -----------------------------
+st.sidebar.header("🔧 Settings & Cost Calculator")
+
+api_key = st.sidebar.text_input("Google Gemini API Key", type="password")
 client = init_gemini_client(api_key) if api_key else None
+if not api_key:
+    st.sidebar.info("Enter your Gemini API key to enable generation features.")
+
+num_products = st.sidebar.number_input("Desired number of products to generate", min_value=1, value=50)
+image_cost_per_unit = st.sidebar.number_input("Cost per image ($)", min_value=0.0, value=0.05, step=0.005)
+text_cost_per_unit = st.sidebar.number_input("Cost per short description ($)", min_value=0.0, value=0.01, step=0.001)
+max_image_spend = st.sidebar.number_input("Max budget for images ($)", min_value=0.0, value=5.0, step=0.1)
+thumbnail_toggle = st.sidebar.checkbox("Show thumbnails in preview", value=False)
+batch_limit_global = 50
+
+allowed_by_budget = int(max_image_spend // image_cost_per_unit) if image_cost_per_unit > 0 else batch_limit_global
+effective_batch = min(num_products, batch_limit_global, max(0, allowed_by_budget))
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 💸 Cost estimate")
+st.sidebar.write(f"Images: ${image_cost_per_unit:.4f} × {num_products} = ${image_cost_per_unit * num_products:.2f}")
+st.sidebar.write(f"Short desc: ${text_cost_per_unit:.4f} × {num_products} = ${text_cost_per_unit * num_products:.2f}")
+st.sidebar.write(f"**Total est:** ${ (image_cost_per_unit + text_cost_per_unit) * num_products:.2f}")
+st.sidebar.write(f"Max products allowed by budget: **{effective_batch}**")
+st.sidebar.markdown("---")
 
 # -----------------------------
-# Sidebar Calculator
-# -----------------------------
-st.sidebar.header("💰 Gemini Cost Calculator")
-num_products = st.sidebar.number_input("Number of products to generate", min_value=1, value=50)
-image_cost_per_unit = st.sidebar.number_input("Cost per image ($)", min_value=0.0, value=0.05, step=0.01)
-text_cost_per_unit = st.sidebar.number_input("Cost per short description ($)", min_value=0.0, value=0.01, step=0.01)
-max_image_spend = st.sidebar.number_input("Max budget for image generation ($)", min_value=0.0, value=5.0, step=0.1)
-
-# Calculate batch limit by max spend
-allowed_by_budget = int(max_image_spend // image_cost_per_unit)
-max_batch = min(num_products, 50, allowed_by_budget)
-
-total_image_cost = num_products * image_cost_per_unit
-total_text_cost = num_products * text_cost_per_unit
-total_cost = total_image_cost + total_text_cost
-
-st.sidebar.markdown("### 💸 Estimated Cost")
-st.sidebar.write(f"Image Generation: ${total_image_cost:.2f}")
-st.sidebar.write(f"Short Description Generation: ${total_text_cost:.2f}")
-st.sidebar.write(f"**Total Estimated Cost: ${total_cost:.2f}**")
-st.sidebar.write(f"Max products allowed by budget: {max_batch}")
-
-# -----------------------------
-# Session State
+# Session state defaults
 # -----------------------------
 if "generated_products" not in st.session_state:
     st.session_state["generated_products"] = []
-if "removed_columns" not in st.session_state:
-    st.session_state["removed_columns"] = []
 if "dashboard" not in st.session_state:
-    st.session_state["dashboard"] = {"imported_count": 0}
+    st.session_state["dashboard"] = {"last_generated": 0, "last_inserted": 0}
+if "oplog" not in st.session_state:
+    st.session_state["oplog"] = []
 
 # -----------------------------
-# Upload Excel
+# Dashboard metrics
 # -----------------------------
-uploaded_file = st.file_uploader("Upload Excel file (.xlsx)", type=["xlsx"])
-if uploaded_file and client:
-    df = pd.read_excel(uploaded_file, engine="openpyxl")
-
-    # Remove undefined / all NaN columns
-    removed_cols = [c for c in df.columns if df[c].isna().all()]
-    df = df.drop(columns=removed_cols)
-    st.session_state["removed_columns"] = removed_cols
-
-    # Add Total Stock column if possible
-    if "Stock" in df.columns and "Case Size" in df.columns:
-        df["Total Stock"] = df["Stock"].fillna(0) * df["Case Size"].fillna(0)
-
-    st.subheader("✅ Uploaded Data Preview")
-    st.dataframe(df.head(10))
-
-    if st.button(f"Generate Image & Descriptions (Max {max_batch} new products)"):
-        generated_rows = []
-        progress_bar = st.progress(0)
-
-        # Collect new products (skip duplicates, case-insensitive)
-        new_products = []
-        for _, row in df.iterrows():
-            product_dict = row.to_dict()
-            item_desc = str(product_dict.get("Item Description", "")).strip().lower()
-            product_dict["Item Description"] = item_desc
-            if products_col.find_one({"Item Description": item_desc}):
-                continue
-            new_products.append(product_dict)
-
-        if not new_products:
-            st.info("⚠️ No new products to generate. All exist in DB.")
-        else:
-            # Limit batch by max_batch
-            batch = new_products[:max_batch]
-
-            for idx, product_dict in enumerate(batch):
-                product_dict["image_base64"] = generate_product_image(client, product_dict)
-                product_dict["short_description"] = generate_short_description(client, product_dict)
-                product_dict["long_description"] = generate_long_description(product_dict)
-                generated_rows.append(product_dict)
-                progress_bar.progress((idx + 1) / len(batch))
-
-            st.session_state["generated_products"] = generated_rows
-            st.session_state["dashboard"]["imported_count"] = len(generated_rows)
-
-            st.subheader("📝 Generated Products Preview")
-            preview_df = pd.DataFrame(generated_rows).drop(columns=["image_base64"], errors="ignore")
-            st.dataframe(preview_df)
-
-            if removed_cols:
-                st.info(f"Removed undefined columns during import: {removed_cols}")
-
-# -----------------------------
-# Insert Products
-# -----------------------------
-if st.session_state["generated_products"]:
-    if st.button("Insert Generated Products to DB"):
-        inserted_count = 0
-        skipped_count = 0
-        for prod in st.session_state["generated_products"]:
-            if insert_product(prod):
-                inserted_count += 1
-            else:
-                skipped_count += 1
-        st.success(f"✅ Inserted: {inserted_count}, Skipped (duplicates): {skipped_count}")
-        st.session_state["generated_products"] = []
-
-# -----------------------------
-# Dashboard / Summary
-# -----------------------------
-st.subheader("📊 Dashboard Summary")
+col1, col2, col3 = st.columns(3)
 total_db_products = len(get_all_products())
-imported_count = st.session_state["dashboard"]["imported_count"]
-st.write(f"Total products in DB: {total_db_products}")
-st.write(f"Products generated this session: {imported_count}")
-st.write(f"Estimated cost for image generation: ${imported_count * image_cost_per_unit:.2f}")
-st.write(f"Estimated cost for short description: ${imported_count * text_cost_per_unit:.2f}")
-st.write(f"Total estimated cost: ${imported_count * (image_cost_per_unit + text_cost_per_unit):.2f}")
+col1.metric("Total products in DB", total_db_products)
+col2.metric("Generated (session)", len(st.session_state["generated_products"]))
+col3.metric("Image Gen Limit", effective_batch)
+
+with st.expander("🧾 Operation Log"):
+    for msg in reversed(st.session_state["oplog"][-10:]):
+        st.write(msg)
 
 # -----------------------------
-# View DB
+# Upload & prepare
 # -----------------------------
-st.subheader("📝 All Products in DB")
-all_products = get_all_products()
-if all_products:
-    st.dataframe(pd.DataFrame(all_products))
+st.header("1️⃣ Upload & Prepare")
+uploaded_file = st.file_uploader("Upload Excel file (.xlsx)", type=["xlsx"])
+uploaded_df = None
+if uploaded_file:
+    try:
+        uploaded_df = pd.read_excel(uploaded_file, engine="openpyxl")
+        st.dataframe(uploaded_df.head(10))
+    except Exception as e:
+        st.error(f"Failed to read file: {e}")
 
-columns = list(pd.DataFrame(all_products).columns) if all_products else []
+if uploaded_df is not None:
+    # Drop empty columns
+    removed_cols = [c for c in uploaded_df.columns if uploaded_df[c].isna().all()]
+    if removed_cols:
+        uploaded_df = uploaded_df.drop(columns=removed_cols)
+        show_toast(f"Removed empty columns: {removed_cols}", "info")
 
-# -----------------------------
-# Delete Column (Dropdown)
-# -----------------------------
-st.subheader("🗑️ Delete Column from DB")
-if columns:
-    col_to_delete = st.selectbox("Select column to delete", options=columns)
-    if st.button("Delete Column"):
-        delete_column(col_to_delete)
-        st.success(f"✅ Column '{col_to_delete}' deleted from all products")
+    # Compute Total Stock
+    if "Stock" in uploaded_df.columns and "Case Size" in uploaded_df.columns:
+        uploaded_df["Total Stock"] = uploaded_df["Stock"].fillna(0) * uploaded_df["Case Size"].fillna(0)
 
-# -----------------------------
-# Rename Column (Dropdown + Input)
-# -----------------------------
-st.subheader("✏️ Rename Column in DB")
-if columns:
-    col_to_rename = st.selectbox("Select column to rename", options=columns, key="rename_select")
-    new_col_name = st.text_input("Enter new column name")
-    if st.button("Rename Column"):
-        if new_col_name.strip():
-            products_col.update_many({}, {"$rename": {col_to_rename: new_col_name.strip()}})
-            st.success(f"✅ Column '{col_to_rename}' renamed to '{new_col_name.strip()}'")
+    st.markdown("### Cleaned Preview")
+    st.dataframe(uploaded_df.head(10))
+
+    # Generate button
+    st.markdown("---")
+    st.header("2️⃣ Generate (Images & Descriptions)")
+    colA, colB = st.columns([3, 1])
+    with colA:
+        st.write("Duplicates skipped (case-insensitive). Batch limited to budget.")
+    with colB:
+        gen_btn = st.button("Generate Preview")
+
+    if gen_btn:
+        if not client:
+            show_toast("Please enter Gemini API key.", "error")
         else:
-            st.error("❌ New column name cannot be empty")
+            new_products = []
+            for _, row in uploaded_df.iterrows():
+                prod = row.to_dict()
+                item_desc = safe_normalize(prod.get("Item Description", ""))
+                if not item_desc:
+                    continue
+                if products_col.find_one({"Item Description": item_desc}):
+                    continue
+                new_products.append(prod)
+
+            batch = new_products[:effective_batch]
+            st.session_state["generated_products"] = []
+            pb = st.progress(0)
+            for i, prod in enumerate(batch):
+                try:
+                    prod["image_base64"] = generate_product_image(client, prod)
+                    prod["short_description"] = generate_short_description(client, prod)
+                    prod["long_description"] = generate_long_description(prod)
+                    st.session_state["generated_products"].append(prod)
+                except Exception as e:
+                    st.session_state["oplog"].append(f"Failed: {e}")
+                pb.progress((i + 1) / len(batch))
+            show_toast(f"Generated {len(batch)} products (preview below)", "success")
 
 # -----------------------------
-# Download DB
+# Preview & Verify
 # -----------------------------
-st.subheader("⬇️ Download DB as Excel")
-if st.button("Download Excel"):
+st.markdown("---")
+st.header("3️⃣ Preview Before Insert")
+if st.session_state["generated_products"]:
+    gen_df = pd.DataFrame(st.session_state["generated_products"])
+    st.dataframe(gen_df.drop(columns=["image_base64"], errors="ignore"))
+    if st.button("Insert Generated Products to DB"):
+        inserted = 0
+        for p in list(st.session_state["generated_products"]):
+            if insert_product(p):
+                inserted += 1
+        show_toast(f"Inserted {inserted} products to DB.", "success")
+        st.session_state["generated_products"] = []
+        refresh_ui()
+else:
+    st.info("No generated products yet.")
+
+# -----------------------------
+# DB View (Pagination + Search + Filters)
+# -----------------------------
+st.markdown("---")
+st.header("4️⃣ Database Management & Viewer")
+
+all_products = get_all_products()
+if not all_products:
+    st.info("Database is empty.")
+else:
+    df_db = pd.DataFrame(all_products)
+
+    # --- Filters ---
+    st.subheader("🔍 Search & Filter")
+    search_term = st.text_input("Search by Item Description or Category").lower().strip()
+    category_col = "Category" if "Category" in df_db.columns else None
+
+    if search_term:
+        df_db = df_db[df_db.apply(lambda x: search_term in str(x).lower(), axis=1)]
+
+    if category_col:
+        categories = ["All"] + sorted(df_db[category_col].dropna().unique().tolist())
+        selected_category = st.selectbox("Filter by Category", categories)
+        if selected_category != "All":
+            df_db = df_db[df_db[category_col] == selected_category]
+
+    # --- Pagination ---
+    items_per_page = st.number_input("Items per page", 5, 50, 20)
+    total_pages = math.ceil(len(df_db) / items_per_page)
+    page = st.number_input("Page", 1, total_pages, 1)
+
+    start_idx = (page - 1) * items_per_page
+    end_idx = start_idx + items_per_page
+    st.write(f"Showing {start_idx + 1}–{min(end_idx, len(df_db))} of {len(df_db)}")
+    st.dataframe(df_db.iloc[start_idx:end_idx])
+
+# -----------------------------
+# Delete / Rename Column
+# -----------------------------
+st.markdown("---")
+st.header("5️⃣ Column Operations")
+
+columns = list(df_db.columns) if not df_db.empty else []
+
+if columns:
+    with st.expander("🗑️ Delete Column"):
+        del_col = st.selectbox("Select column to delete", options=columns, key="del_col_select")
+        if st.button("Delete Column"):
+            delete_column(del_col)
+            show_toast(f"Deleted column '{del_col}'.", "success")
+            refresh_ui()
+
+    with st.expander("✏️ Rename Column"):
+        rename_col = st.selectbox("Select column to rename", options=columns, key="rename_col_select")
+        new_name = st.text_input("New column name")
+        if st.button("Rename Column"):
+            if not new_name.strip():
+                show_toast("New column name cannot be empty.", "error")
+            else:
+                products_col.update_many({}, {"$rename": {rename_col: new_name.strip()}})
+                show_toast(f"Renamed '{rename_col}' to '{new_name.strip()}'", "success")
+                refresh_ui()
+
+# -----------------------------
+# Export
+# -----------------------------
+st.markdown("---")
+st.header("6️⃣ Export / Backup")
+
+if st.button("Download DB as Excel"):
     excel_bytes = write_excel(pd.DataFrame(get_all_products()))
     st.download_button("Download Excel", data=excel_bytes, file_name="products.xlsx")
+
+st.markdown("✅ **Notes:** All 'Item Descriptions' are normalized (lowercased) to avoid duplicates. Pagination, filters, and column operations are included for large datasets.")
