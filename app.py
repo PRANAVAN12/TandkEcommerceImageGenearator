@@ -1,11 +1,8 @@
 import streamlit as st
 import pandas as pd
-from db import insert_product, get_all_products, delete_column, products_col
-from utils import write_excel, generate_product_image, generate_short_description, generate_long_description, init_gemini_client
-from io import BytesIO
-import base64
 import math
-import time
+from db import insert_product, get_all_products, delete_column, products_col, rename_column
+from utils import write_excel, generate_product_image, generate_short_description, generate_long_description, init_gemini_client
 
 st.set_page_config(page_title="🛒 E-Commerce Product Manager", layout="wide")
 st.title("🛍️ E-Commerce Product Management Dashboard")
@@ -15,7 +12,6 @@ st.title("🛍️ E-Commerce Product Management Dashboard")
 # -----------------------------
 def refresh_ui():
     st.rerun()
-
 
 def safe_normalize(desc):
     return str(desc).strip().lower() if desc is not None else ""
@@ -56,7 +52,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### 💸 Cost estimate")
 st.sidebar.write(f"Images: ${image_cost_per_unit:.4f} × {num_products} = ${image_cost_per_unit * num_products:.2f}")
 st.sidebar.write(f"Short desc: ${text_cost_per_unit:.4f} × {num_products} = ${text_cost_per_unit * num_products:.2f}")
-st.sidebar.write(f"**Total est:** ${ (image_cost_per_unit + text_cost_per_unit) * num_products:.2f}")
+st.sidebar.write(f"**Total est:** ${(image_cost_per_unit + text_cost_per_unit) * num_products:.2f}")
 st.sidebar.write(f"Max products allowed by budget: **{effective_batch}**")
 st.sidebar.markdown("---")
 
@@ -129,7 +125,8 @@ if uploaded_df is not None:
                 item_desc = safe_normalize(prod.get("Item Description", ""))
                 if not item_desc:
                     continue
-                if products_col and products_col.find_one({"Item Description": item_desc}):
+                # ✅ Fixed NotImplementedError
+                if products_col is not None and products_col.find_one({"Item Description": item_desc}):
                     continue
                 new_products.append(prod)
 
@@ -166,7 +163,6 @@ if st.session_state["generated_products"]:
 else:
     st.info("No generated products yet.")
 
-
 # -----------------------------
 # DB View (Pagination + Search + Filters)
 # -----------------------------
@@ -202,7 +198,7 @@ if all_products:
     st.dataframe(df_db.iloc[start_idx:end_idx])
 
 else:
-    df_db = pd.DataFrame()  # <-- Always define df_db even if empty
+    df_db = pd.DataFrame()
     st.info("Database is empty.")
 
 # -----------------------------
@@ -228,10 +224,10 @@ if columns:
             if not new_name.strip():
                 show_toast("New column name cannot be empty.", "error")
             else:
-                products_col.update_many({}, {"$rename": {rename_col: new_name.strip()}})
+                if products_col is not None:
+                    rename_column(rename_col, new_name.strip())
                 show_toast(f"Renamed '{rename_col}' to '{new_name.strip()}'", "success")
                 refresh_ui()
-
 
 # -----------------------------
 # Export

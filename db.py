@@ -1,4 +1,3 @@
-import os
 import pymongo
 from pymongo import MongoClient, errors, ASCENDING
 from pymongo.collation import Collation
@@ -6,23 +5,16 @@ from pymongo.collation import Collation
 # --------------------------
 # MongoDB Connection
 # --------------------------
-# Use environment variable for security (set in Streamlit Cloud secrets or locally)
-MONGO_URI = os.getenv("MONGO_URI")  # Example: mongodb+srv://user:pass@cluster0.pbytjt7.mongodb.net
-
-# Default database and collection names
-DB_NAME = os.getenv("DB_NAME", "fast_crud_db")
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "products")
+MONGO_URI = "mongodb+srv://prana:gwAJG2n6GM6LB2wj@cluster0.pbytjt7.mongodb.net/fast_crud_db?retryWrites=true&w=majority"
 
 try:
-    client = MongoClient(
-        MONGO_URI,
-        serverSelectionTimeoutMS=10000,  # 10 seconds timeout
-        tls=True,
-        tlsAllowInvalidCertificates=False
-    )
+    # Connect with TLS/SSL and timeout
+    client = MongoClient(MONGO_URI, tls=True, serverSelectionTimeoutMS=10000)
     client.server_info()  # Force connection test
 
-    # Automatically create DB and collection
+    # Database & Collection
+    DB_NAME = "fast_crud_db"
+    COLLECTION_NAME = "products"
     db = client[DB_NAME]
     products_col = db[COLLECTION_NAME]
 
@@ -40,12 +32,20 @@ except errors.ServerSelectionTimeoutError as e:
     db = None
     products_col = None
 
+except Exception as e:
+    print("❌ Unexpected error:", e)
+    client = None
+    db = None
+    products_col = None
+
+
 # --------------------------
 # Utility functions
 # --------------------------
 def normalize_desc(desc: str) -> str:
     """Normalize string (lowercase + strip)"""
     return str(desc).strip().lower() if desc else ""
+
 
 def insert_product(data: dict) -> bool:
     """Insert a product if it does not exist (case-insensitive)"""
@@ -68,28 +68,33 @@ def insert_product(data: dict) -> bool:
     except errors.DuplicateKeyError:
         return False
 
+
 def get_all_products() -> list:
     """Return all products as a list of dicts (exclude _id)"""
     if products_col is None:
         return []
     return list(products_col.find({}, {"_id": 0}))
 
+
 def delete_column(col_name: str):
     """Delete a column from all documents"""
-    if products_col:
+    if products_col is not None:
         products_col.update_many({}, {"$unset": {col_name: ""}})
+
 
 def rename_column(old_name: str, new_name: str):
     """Rename a column across all documents"""
-    if products_col:
+    if products_col is not None:
         products_col.update_many({}, {"$rename": {old_name: new_name}})
+
 
 def update_product(product_code: str, update_data: dict):
     """Update a product by its product_code"""
-    if products_col:
+    if products_col is not None:
         products_col.update_one({"product_code": product_code}, {"$set": update_data})
+
 
 def delete_product(product_code: str):
     """Delete a product by its product_code"""
-    if products_col:
+    if products_col is not None:
         products_col.delete_one({"product_code": product_code})
