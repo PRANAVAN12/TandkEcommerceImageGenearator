@@ -2,7 +2,7 @@ import base64
 from io import BytesIO
 from PIL import Image
 import pandas as pd
-from google import genai
+import google.generativeai as genai
 from google.genai import types
 
 def init_gemini_client(api_key):
