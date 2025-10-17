@@ -14,7 +14,8 @@ st.title("🛍️ E-Commerce Product Management Dashboard")
 # Helper utilities
 # -----------------------------
 def refresh_ui():
-    st.experimental_rerun()
+    st.rerun()
+
 
 def safe_normalize(desc):
     return str(desc).strip().lower() if desc is not None else ""
@@ -128,7 +129,7 @@ if uploaded_df is not None:
                 item_desc = safe_normalize(prod.get("Item Description", ""))
                 if not item_desc:
                     continue
-                if products_col.find_one({"Item Description": item_desc}):
+                if products_col and products_col.find_one({"Item Description": item_desc}):
                     continue
                 new_products.append(prod)
 
@@ -165,6 +166,7 @@ if st.session_state["generated_products"]:
 else:
     st.info("No generated products yet.")
 
+
 # -----------------------------
 # DB View (Pagination + Search + Filters)
 # -----------------------------
@@ -172,9 +174,7 @@ st.markdown("---")
 st.header("4️⃣ Database Management & Viewer")
 
 all_products = get_all_products()
-if not all_products:
-    st.info("Database is empty.")
-else:
+if all_products:
     df_db = pd.DataFrame(all_products)
 
     # --- Filters ---
@@ -193,13 +193,17 @@ else:
 
     # --- Pagination ---
     items_per_page = st.number_input("Items per page", 5, 50, 20)
-    total_pages = math.ceil(len(df_db) / items_per_page)
+    total_pages = max(1, math.ceil(len(df_db) / items_per_page))
     page = st.number_input("Page", 1, total_pages, 1)
 
     start_idx = (page - 1) * items_per_page
     end_idx = start_idx + items_per_page
     st.write(f"Showing {start_idx + 1}–{min(end_idx, len(df_db))} of {len(df_db)}")
     st.dataframe(df_db.iloc[start_idx:end_idx])
+
+else:
+    df_db = pd.DataFrame()  # <-- Always define df_db even if empty
+    st.info("Database is empty.")
 
 # -----------------------------
 # Delete / Rename Column
@@ -227,6 +231,7 @@ if columns:
                 products_col.update_many({}, {"$rename": {rename_col: new_name.strip()}})
                 show_toast(f"Renamed '{rename_col}' to '{new_name.strip()}'", "success")
                 refresh_ui()
+
 
 # -----------------------------
 # Export

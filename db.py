@@ -1,23 +1,66 @@
-from pymongo import MongoClient, errors
+import os
+import pymongo
+from pymongo import MongoClient, errors, ASCENDING
+from pymongo.collation import Collation
 
-client = MongoClient("mongodb://localhost:27017/")
-db = client["fast_crud_db"]
-products_col = db["products2"]
+# --------------------------
+# MongoDB Connection
+# --------------------------
+# Use environment variable for security (set in Streamlit Cloud secrets or locally)
+MONGO_URI = os.getenv("MONGO_URI")  # Example: mongodb+srv://user:pass@cluster0.pbytjt7.mongodb.net
 
-# Ensure 'Item Description' is unique (case-insensitive)
-products_col.create_index([("Item Description", 1)], unique=True)
+# Default database and collection names
+DB_NAME = os.getenv("DB_NAME", "fast_crud_db")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "products")
 
-def normalize_desc(desc):
-    return desc.strip().lower() if desc else ""
+try:
+    client = MongoClient(
+        MONGO_URI,
+        serverSelectionTimeoutMS=10000,  # 10 seconds timeout
+        tls=True,
+        tlsAllowInvalidCertificates=False
+    )
+    client.server_info()  # Force connection test
 
-# Insert product (avoid duplicates)
-def insert_product(data):
+    # Automatically create DB and collection
+    db = client[DB_NAME]
+    products_col = db[COLLECTION_NAME]
+
+    # Ensure case-insensitive unique index on Item Description
+    products_col.create_index(
+        [("Item Description", ASCENDING)],
+        unique=True,
+        collation=Collation(locale='en', strength=2)
+    )
+    print(f"✅ Connected to MongoDB: DB='{DB_NAME}', Collection='{COLLECTION_NAME}'")
+
+except errors.ServerSelectionTimeoutError as e:
+    print("❌ Database connection failed:", e)
+    client = None
+    db = None
+    products_col = None
+
+# --------------------------
+# Utility functions
+# --------------------------
+def normalize_desc(desc: str) -> str:
+    """Normalize string (lowercase + strip)"""
+    return str(desc).strip().lower() if desc else ""
+
+def insert_product(data: dict) -> bool:
+    """Insert a product if it does not exist (case-insensitive)"""
+    if products_col is None:
+        print("⚠️ Database not connected. Skipping insert.")
+        return False
+
     item_desc = normalize_desc(data.get("Item Description", ""))
     if not item_desc:
         return False
+
     if products_col.find_one({"Item Description": {"$regex": f"^{item_desc}$", "$options": "i"}}):
         print(f"Duplicate found: '{item_desc}' — skipping.")
         return False
+
     try:
         data["Item Description"] = item_desc
         products_col.insert_one(data)
@@ -25,17 +68,28 @@ def insert_product(data):
     except errors.DuplicateKeyError:
         return False
 
-def get_all_products():
+def get_all_products() -> list:
+    """Return all products as a list of dicts (exclude _id)"""
+    if products_col is None:
+        return []
     return list(products_col.find({}, {"_id": 0}))
 
-def delete_column(col_name):
-    products_col.update_many({}, {"$unset": {col_name: ""}})
+def delete_column(col_name: str):
+    """Delete a column from all documents"""
+    if products_col:
+        products_col.update_many({}, {"$unset": {col_name: ""}})
 
-def rename_column(old_name, new_name):
-    products_col.update_many({}, {"$rename": {old_name: new_name}})
+def rename_column(old_name: str, new_name: str):
+    """Rename a column across all documents"""
+    if products_col:
+        products_col.update_many({}, {"$rename": {old_name: new_name}})
 
-def update_product(product_code, update_data):
-    products_col.update_one({"product_code": product_code}, {"$set": update_data})
+def update_product(product_code: str, update_data: dict):
+    """Update a product by its product_code"""
+    if products_col:
+        products_col.update_one({"product_code": product_code}, {"$set": update_data})
 
-def delete_product(product_code):
-    products_col.delete_one({"product_code": product_code})
+def delete_product(product_code: str):
+    """Delete a product by its product_code"""
+    if products_col:
+        products_col.delete_one({"product_code": product_code})
