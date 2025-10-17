@@ -1,5 +1,3 @@
-
-
 import base64
 from io import BytesIO
 from PIL import Image
@@ -7,8 +5,8 @@ import pandas as pd
 from google import genai
 from google.genai import types
 
-API_KEY = "AIzaSyA-rBHw05nPOAYg8X_GBgnLLQBKMrxjGos"
-client = genai.Client(api_key=API_KEY)
+def init_gemini_client(api_key):
+    return genai.Client(api_key=api_key)
 
 def write_excel(df: pd.DataFrame) -> bytes:
     output = BytesIO()
@@ -16,7 +14,7 @@ def write_excel(df: pd.DataFrame) -> bytes:
         df.to_excel(writer, index=False)
     return output.getvalue()
 
-def generate_product_image(product: dict) -> str:
+def generate_product_image(client, product: dict) -> str:
     item_desc = product.get("Item Description", "Product")
     prompt = f"High-quality e-commerce product photo of {item_desc}, white background, realistic, studio lighting"
     try:
@@ -30,27 +28,29 @@ def generate_product_image(product: dict) -> str:
                 img_bytes = part.inline_data.data
                 img_base64 = base64.b64encode(img_bytes).decode("utf-8")
                 return f"data:image/png;base64,{img_base64}"
-    except Exception:
-        pass
+    except Exception as e:
+        print("Gemini Image generation error:", e)
+
     # fallback white image
     img = Image.new("RGB", (256, 256), (255, 255, 255))
     buf = BytesIO()
     img.save(buf, format="PNG")
     return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
 
-def generate_short_description(product: dict) -> str:
+def generate_short_description(client, product: dict) -> str:
     item_desc = product.get("Item Description", "Product")
     prompt = (
-        f"Write a short, concise paragraph describing '{item_desc}' for an e-commerce product. "
-        "Highlight quality and key features in 1–2 sentences using minimal words."
+        f"Write a short, concise paragraph describing '{item_desc}' for e-commerce. "
+        "Highlight quality and key features in 1–2 sentences."
     )
     try:
         chat = client.chats.create(model="gemini-2.0-flash")
         response = chat.send_message(prompt)
         text_output = "".join([p.text for p in response.candidates[0].content.parts if p.text])
         return text_output.strip()
-    except Exception:
-        return f"{item_desc} is a high-quality, reliable product perfect for e-commerce."
+    except Exception as e:
+        print("Gemini Short Description error:", e)
+        return f"{item_desc} is a high-quality, reliable product for e-commerce."
 
 def generate_long_description(product: dict) -> str:
     item_desc = product.get("Item Description", "Product")

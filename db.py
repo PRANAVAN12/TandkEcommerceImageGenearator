@@ -4,7 +4,7 @@ client = MongoClient("mongodb://localhost:27017/")
 db = client["fast_crud_db"]
 products_col = db["products2"]
 
-# Ensure 'Item Description' is unique
+# Ensure Item Description is unique
 products_col.create_index("Item Description", unique=True)
 
 def insert_product(data):
@@ -12,7 +12,6 @@ def insert_product(data):
     item_desc = data.get("Item Description", "").strip().lower()
     if not item_desc:
         return False
-
     data["Item Description"] = item_desc
     try:
         products_col.insert_one(data)
