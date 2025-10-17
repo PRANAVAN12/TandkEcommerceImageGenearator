@@ -21,6 +21,11 @@ st.sidebar.header("💰 Gemini Cost Calculator")
 num_products = st.sidebar.number_input("Number of products to generate", min_value=1, value=50)
 image_cost_per_unit = st.sidebar.number_input("Cost per image ($)", min_value=0.0, value=0.05, step=0.01)
 text_cost_per_unit = st.sidebar.number_input("Cost per short description ($)", min_value=0.0, value=0.01, step=0.01)
+max_image_spend = st.sidebar.number_input("Max budget for image generation ($)", min_value=0.0, value=5.0, step=0.1)
+
+# Calculate batch limit by max spend
+allowed_by_budget = int(max_image_spend // image_cost_per_unit)
+max_batch = min(num_products, 50, allowed_by_budget)
 
 total_image_cost = num_products * image_cost_per_unit
 total_text_cost = num_products * text_cost_per_unit
@@ -30,6 +35,7 @@ st.sidebar.markdown("### 💸 Estimated Cost")
 st.sidebar.write(f"Image Generation: ${total_image_cost:.2f}")
 st.sidebar.write(f"Short Description Generation: ${total_text_cost:.2f}")
 st.sidebar.write(f"**Total Estimated Cost: ${total_cost:.2f}**")
+st.sidebar.write(f"Max products allowed by budget: {max_batch}")
 
 # -----------------------------
 # Session State
@@ -60,11 +66,11 @@ if uploaded_file and client:
     st.subheader("✅ Uploaded Data Preview")
     st.dataframe(df.head(10))
 
-    if st.button(f"Generate Image & Descriptions (Max {num_products} new products)"):
+    if st.button(f"Generate Image & Descriptions (Max {max_batch} new products)"):
         generated_rows = []
         progress_bar = st.progress(0)
 
-        # Collect new products (skip duplicates)
+        # Collect new products (skip duplicates, case-insensitive)
         new_products = []
         for _, row in df.iterrows():
             product_dict = row.to_dict()
@@ -77,8 +83,8 @@ if uploaded_file and client:
         if not new_products:
             st.info("⚠️ No new products to generate. All exist in DB.")
         else:
-            # Limit batch to min(num_products, 50)
-            batch = new_products[:min(num_products, 50)]
+            # Limit batch by max_batch
+            batch = new_products[:max_batch]
 
             for idx, product_dict in enumerate(batch):
                 product_dict["image_base64"] = generate_product_image(client, product_dict)
@@ -132,14 +138,31 @@ all_products = get_all_products()
 if all_products:
     st.dataframe(pd.DataFrame(all_products))
 
+columns = list(pd.DataFrame(all_products).columns) if all_products else []
+
 # -----------------------------
-# Delete Column
+# Delete Column (Dropdown)
 # -----------------------------
 st.subheader("🗑️ Delete Column from DB")
-col_to_delete = st.text_input("Enter column name to delete from all products")
-if st.button("Delete Column"):
-    delete_column(col_to_delete)
-    st.success(f"✅ Column '{col_to_delete}' deleted from all products")
+if columns:
+    col_to_delete = st.selectbox("Select column to delete", options=columns)
+    if st.button("Delete Column"):
+        delete_column(col_to_delete)
+        st.success(f"✅ Column '{col_to_delete}' deleted from all products")
+
+# -----------------------------
+# Rename Column (Dropdown + Input)
+# -----------------------------
+st.subheader("✏️ Rename Column in DB")
+if columns:
+    col_to_rename = st.selectbox("Select column to rename", options=columns, key="rename_select")
+    new_col_name = st.text_input("Enter new column name")
+    if st.button("Rename Column"):
+        if new_col_name.strip():
+            products_col.update_many({}, {"$rename": {col_to_rename: new_col_name.strip()}})
+            st.success(f"✅ Column '{col_to_rename}' renamed to '{new_col_name.strip()}'")
+        else:
+            st.error("❌ New column name cannot be empty")
 
 # -----------------------------
 # Download DB

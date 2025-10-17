@@ -2,7 +2,7 @@ from pymongo import MongoClient, errors
 
 client = MongoClient("mongodb://localhost:27017/")
 db = client["fast_crud_db"]
-products_col = db["products2"]
+products_col = db["products123"]
 
 # Ensure Item Description is unique
 products_col.create_index("Item Description", unique=True)
