@@ -14,7 +14,8 @@ st.title("🛍️ E-Commerce Product Management Dashboard")
 # Helper utilities
 # -----------------------------
 def refresh_ui():
-    st.experimental_rerun()
+    st.rerun()
+
 
 def safe_normalize(desc):
     return str(desc).strip().lower() if desc is not None else ""
