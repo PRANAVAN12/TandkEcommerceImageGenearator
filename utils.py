@@ -3,16 +3,11 @@ from io import BytesIO
 from PIL import Image
 import pandas as pd
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-# -----------------------------
-# Gemini client setup
-# -----------------------------
-
-
-def init_gemini_client(api_key: str):
-    genai.configure(api_key=api_key)
-    return genai
+def init_gemini_client(api_key):
+    return genai.Client(api_key=api_key)
 
 # -----------------------------
 # Excel export
