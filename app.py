@@ -11,7 +11,9 @@ st.title("🛍️ E-Commerce Product Management Dashboard")
 # Helper utilities
 # -----------------------------
 def refresh_ui():
-    st.experimental_rerun()
+    # Increment a dummy session_state key to trigger a rerun
+    st.session_state["_rerun_counter"] = st.session_state.get("_rerun_counter", 0) + 1
+
 
 def safe_normalize(desc):
     return str(desc).strip().lower() if desc is not None else ""
@@ -148,19 +150,45 @@ if uploaded_df is not None:
 # -----------------------------
 st.markdown("---")
 st.header("3️⃣ Preview Before Insert")
-if st.session_state["generated_products"]:
-    gen_df = pd.DataFrame(st.session_state["generated_products"])
-    st.dataframe(gen_df.drop(columns=["image_base64"], errors="ignore"))
+
+generated_products = st.session_state["generated_products"]
+
+if generated_products:
+    preview_df = pd.DataFrame(generated_products)
+
+    st.subheader("Preview Products with Images")
+    for idx, row in preview_df.iterrows():
+        # Create columns dynamically: 1 for image + rest for other fields
+        cols = st.columns([1] + [3] * (len(preview_df.columns) - 1))
+        
+        # Show image if exists
+        if "image_base64" in row and row["image_base64"]:
+            cols[0].image(row["image_base64"], width=100)
+        else:
+            cols[0].write("No Image")
+        
+        # Show all other fields dynamically
+        col_idx = 1
+        for col_name in preview_df.columns:
+            if col_name == "image_base64":
+                continue
+            cols[col_idx].write(row.get(col_name, ""))
+            col_idx += 1
+
+    # Button to insert generated products
     if st.button("Insert Generated Products to DB"):
         inserted = 0
-        for p in list(st.session_state["generated_products"]):
+        for p in generated_products:
             if insert_product(p):
                 inserted += 1
         show_toast(f"Inserted {inserted} products to DB.", "success")
         st.session_state["generated_products"] = []
-        refresh_ui()
+        # Refresh using session_state
+        st.session_state["_rerun_counter"] = st.session_state.get("_rerun_counter", 0) + 1
+
 else:
     st.info("No generated products yet.")
+
 
 # -----------------------------
 # DB View with images

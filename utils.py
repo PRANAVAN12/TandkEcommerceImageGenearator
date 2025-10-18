@@ -2,17 +2,28 @@ import base64
 from io import BytesIO
 from PIL import Image
 import pandas as pd
+import streamlit as st
 import google.generativeai as genai
 
+# -----------------------------
+# Gemini client setup
+# -----------------------------
 
-def init_gemini_client(api_key):
-    return genai.Client(api_key=api_key)
 
+def init_gemini_client(api_key: str):
+    genai.configure(api_key=api_key)
+    return genai
+
+# -----------------------------
+# Excel export
+# -----------------------------
 def write_excel(df: pd.DataFrame) -> bytes:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
     return output.getvalue()
+
+
 
 def generate_product_image(client, product: dict) -> str:
     item_desc = product.get("Item Description", "Product")
@@ -30,8 +41,7 @@ def generate_product_image(client, product: dict) -> str:
                 return f"data:image/png;base64,{img_base64}"
     except Exception as e:
         print("Gemini Image generation error:", e)
-
-    # fallback white image
+    # Fallback white image
     img = Image.new("RGB", (256, 256), (255, 255, 255))
     buf = BytesIO()
     img.save(buf, format="PNG")

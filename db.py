@@ -30,7 +30,7 @@ try:
     client.server_info()  # Force connection test
 
     DB_NAME = "fast_crud_db"
-    COLLECTION_NAME = "products"
+    COLLECTION_NAME = "products1"
     db = client[DB_NAME]
     products_col = db[COLLECTION_NAME]
 
