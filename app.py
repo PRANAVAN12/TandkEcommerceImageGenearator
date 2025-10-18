@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import math
 from db import insert_product, get_all_products, delete_column, products_col, rename_column, delete_product
-from utils import write_excel, generate_product_image, generate_short_description, generate_long_description, init_gemini_client
+from utils import  generate_product_image, generate_short_description, generate_long_description, init_gemini_client
 
 st.set_page_config(page_title="🛒 E-Commerce Product Manager", layout="wide")
 st.title("🛍️ E-Commerce Product Management Dashboard")
