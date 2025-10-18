@@ -6,6 +6,6 @@ pymongo
 google-generativeai
 dnspython
 python-dotenv
-
+google-genai
 
 
