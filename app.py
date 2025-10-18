@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import math
-from db import insert_product, get_all_products, delete_column, products_col, rename_column
+from db import insert_product, get_all_products, delete_column, products_col, rename_column, delete_product
 from utils import write_excel, generate_product_image, generate_short_description, generate_long_description, init_gemini_client
 
 st.set_page_config(page_title="🛒 E-Commerce Product Manager", layout="wide")
@@ -11,7 +11,7 @@ st.title("🛍️ E-Commerce Product Management Dashboard")
 # Helper utilities
 # -----------------------------
 def refresh_ui():
-    st.rerun()
+    st.experimental_rerun()
 
 def safe_normalize(desc):
     return str(desc).strip().lower() if desc is not None else ""
@@ -125,7 +125,6 @@ if uploaded_df is not None:
                 item_desc = safe_normalize(prod.get("Item Description", ""))
                 if not item_desc:
                     continue
-                # ✅ Fixed NotImplementedError
                 if products_col is not None and products_col.find_one({"Item Description": item_desc}):
                     continue
                 new_products.append(prod)
@@ -164,7 +163,7 @@ else:
     st.info("No generated products yet.")
 
 # -----------------------------
-# DB View (Pagination + Search + Filters)
+# DB View with images
 # -----------------------------
 st.markdown("---")
 st.header("4️⃣ Database Management & Viewer")
@@ -188,18 +187,49 @@ if all_products:
             df_db = df_db[df_db[category_col] == selected_category]
 
     # --- Pagination ---
-    items_per_page = st.number_input("Items per page", 5, 50, 20)
+    items_per_page = st.number_input("Items per page", 5, 50, 10)
     total_pages = max(1, math.ceil(len(df_db) / items_per_page))
     page = st.number_input("Page", 1, total_pages, 1)
-
     start_idx = (page - 1) * items_per_page
     end_idx = start_idx + items_per_page
+
     st.write(f"Showing {start_idx + 1}–{min(end_idx, len(df_db))} of {len(df_db)}")
-    st.dataframe(df_db.iloc[start_idx:end_idx])
+# -----------------------------
+# Display table-like view with images and all other columns
+# -----------------------------
+if not df_db.empty:
+    display_df = df_db.iloc[start_idx:end_idx].copy()
+
+    for idx, row in display_df.iterrows():
+        # First column is for image
+        cols = st.columns([1] + [3]* (len(display_df.columns)-1))
+        
+        if "image_base64" in row and row["image_base64"]:
+            cols[0].image(row["image_base64"], width=80)
+        else:
+            cols[0].write("No Image")
+        
+        # Show all other columns dynamically
+        col_idx = 1
+        for col_name in display_df.columns:
+            if col_name == "image_base64":
+                continue
+            cols[col_idx].write(row.get(col_name, ""))
+            col_idx += 1
+
+    # -----------------------------
+    # Delete product by Item Description
+    # -----------------------------
+    st.markdown("### 🗑️ Delete Product")
+    item_to_delete = st.selectbox("Select product to delete", df_db["Item Description"].tolist())
+    if st.button("Delete Product"):
+        delete_product(item_to_delete)
+        show_toast(f"Deleted '{item_to_delete}' from DB.", "success")
+        refresh_ui()
 
 else:
-    df_db = pd.DataFrame()
     st.info("Database is empty.")
+
 
 # -----------------------------
 # Delete / Rename Column
